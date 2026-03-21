@@ -306,3 +306,151 @@ swimmer_plot
 ```
 
 
+## STEP 3: Fit Parametric Models
+
+
+
+```{r}
+
+#************* creating an object to indicate censored with + sign(83+)
+
+surv_obj <- Surv(time = df_veteran$time, event = df_veteran$status)
+surv_obj
+```
+
+$$f(t)=\lambda e^{-\lambda t}, \quad t>0$$
+
+$$\text{flexsurv uses MLE to estimate parameters}$$
+
+
+```{r}
+exp_model      <- flexsurvreg(surv_obj ~ 1, data = df_veteran, dist = "exp")
+wei_model      <- flexsurvreg(surv_obj ~ 1, data = df_veteran, dist = "weibull")
+ln_model       <- flexsurvreg(surv_obj ~ 1, data = df_veteran, dist = "lnorm")
+ll_model       <- flexsurvreg(surv_obj ~ 1, data = df_veteran, dist = "llogis")
+gom_model      <- flexsurvreg(surv_obj ~ 1, data = df_veteran, dist = "gompertz")
+gamma_model    <- flexsurvreg(surv_obj ~ 1, data = df_veteran, dist = "gamma")
+gengamma_model <- flexsurvreg(surv_obj ~ 1, data = df_veteran, dist = "gengamma")
+
+```
+
+
+
+
+### AIC, LogLik, and MLE Estimates
+
+
+
+
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+get_mle_parameters_estimate <- function(model) {
+  est <- model$res[, "est", drop = FALSE]
+  param_names <- rownames(est)
+
+  # Rename parameter names to symbols
+  param_names[param_names == "mu"] <- "&mu;"
+  param_names[param_names == "sigma"] <- "&sigma;"
+  param_names[param_names == "shape"] <- "k"
+  param_names[param_names == "scale"] <- "&lambda;"
+  param_names[param_names == "rate"] <- "&lambda;"
+  param_names[param_names == "meanlog"] <- "&mu;<sub>log</sub>"
+  param_names[param_names == "sdlog"] <- "&sigma;<sub>log</sub>"
+
+  paste(param_names, "=", round(est[, 1], 4), collapse = "<br>")
+}
+
+#********** Function to display Generalized Gamma in lecture-note form a, d, p
+
+get_gengamma_adp <- function(model) {
+  mu <- model$res["mu", "est"]
+  sigma <- model$res["sigma", "est"]
+  Q <- model$res["Q", "est"]
+
+  k <- 1 / (Q^2)
+  p <- Q / sigma
+  a <- exp(mu - log(k) / p)
+  d <- p * k
+
+  paste0(
+    "a = ", round(a, 4), "<br>",
+    "d = ", round(d, 4), "<br>",
+    "p = ", round(p, 4)
+  )
+}
+
+model_table <- data.frame(
+  Model = c(
+    "Exponential",
+    "Weibull",
+    "Log-normal",
+    "Log-logistic",
+    "Gompertz",
+    "Gamma",
+    "Generalized Gamma"
+  ),
+  LogLik = c(
+    exp_model$loglik,
+    wei_model$loglik,
+    ln_model$loglik,
+    ll_model$loglik,
+    gom_model$loglik,
+    gamma_model$loglik,
+    gengamma_model$loglik
+  ),
+  AIC = c(
+    AIC(exp_model),
+    AIC(wei_model),
+    AIC(ln_model),
+    AIC(ll_model),
+    AIC(gom_model),
+    AIC(gamma_model),
+    AIC(gengamma_model)
+  ),
+  "MLE Estimates" = c(
+    get_mle_parameters_estimate(exp_model),
+    get_mle_parameters_estimate(wei_model),
+    get_mle_parameters_estimate(ln_model),
+    get_mle_parameters_estimate(ll_model),
+    get_mle_parameters_estimate(gom_model),
+    get_mle_parameters_estimate(gamma_model),
+    get_gengamma_adp(gengamma_model)
+  ),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+model_table <- model_table %>%
+  mutate(
+    LogLik = round(LogLik, 4),
+    AIC = round(AIC, 4)
+  )
+
+modeltable <- kbl(
+  model_table,
+  format = "html",
+  escape = FALSE,
+  align = c("l", "c", "c", "l"),
+  caption = ""
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 14,
+    bootstrap_options = c("striped", "hover", "condensed")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(model_table), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1, color = "black", width = "12em") %>%
+  column_spec(2, color = "black", width = "8em") %>%
+  column_spec(3, color = "black", width = "8em") %>%
+  column_spec(4, color = "black", width = "22em")
+
+modeltable
+
+save_kable(modeltable, "modeltable.png", zoom = 4)
+
+```
+

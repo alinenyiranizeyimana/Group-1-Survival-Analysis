@@ -32,7 +32,6 @@ The dataset contains clinical information for 137 lung cancer patients, includin
 The following methods were applied:
 
 * Kaplan–Meier estimation for non-parametric survival analysis
-* Log-rank test for comparing treatment groups
 * Parametric models:
 
   * Exponential

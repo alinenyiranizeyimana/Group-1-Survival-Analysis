@@ -1,0 +1,138 @@
+---
+title: "Group 1 Survival Analysis Project"
+author: "Group 1"
+date: "2026-03-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## STEP 1: Data Preparation and Baseline Table
+
+```{r}
+library(survival)
+library(dplyr)
+library(tidyr)
+library(finalfit)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(survminer)
+library(flexsurv)
+library(gridExtra)
+library(tibble)
+
+data(cancer, package = "survival")
+
+df_veteran <- veteran
+
+if (all(sort(unique(na.omit(df_veteran$status))) == c(1, 2))) {
+  df_veteran <- df_veteran %>%
+    mutate(status = status - 1)
+}
+
+df_veteran <- df_veteran %>%
+  mutate(
+    trt = factor(trt, levels = c(1, 2), labels = c("Standard", "Test")),
+    celltype = as.character(celltype),
+    celltype = case_when(
+      celltype %in% c("1", "squamous") ~ "Squamous",
+      celltype %in% c("2", "smallcell") ~ "Small cell",
+      celltype %in% c("3", "adeno") ~ "Adeno",
+      celltype %in% c("4", "large") ~ "Large",
+      TRUE ~ celltype
+    ),
+    celltype = factor(celltype, levels = c("Squamous", "Small cell", "Adeno", "Large")),
+    prior = factor(ifelse(prior == 0, "No", "Yes"), levels = c("No", "Yes")),
+    event_label = factor(status, levels = c(0, 1), labels = c("Censored", "Death"))
+  ) %>%
+  mutate(
+    age = ff_label(age, "Age (years)"),
+    karno = ff_label(karno, "Karnofsky score"),
+    diagtime = ff_label(diagtime, "Months from diagnosis"),
+    time = ff_label(time, "Survival time (days)"),
+    celltype = ff_label(celltype, "Cell type"),
+    prior = ff_label(prior, "Prior therapy"),
+    event_label = ff_label(event_label, "Death (event)")
+  )
+```
+
+
+
+## STEP 2: Exploratory Analysis
+
+
+
+
+```{r}
+dependent <- "trt"
+explanatory <- c("age", "karno", "diagtime", "time", "celltype", "prior", "event_label")
+
+table1 <- df_veteran %>%
+  summary_factorlist(
+    dependent = dependent,
+    explanatory = explanatory,
+    total_col = TRUE,
+    p = TRUE,
+    na_include = FALSE,
+    p_cont_para = "t.test",
+    p_cat = "fisher",
+    add_dependent_label = FALSE
+  ) %>%
+  ff_row_totals(
+    .data = df_veteran,
+    dependent = dependent,
+    explanatory = explanatory,
+    total_name = "Total N",
+    na_name = "Missing N"
+  )
+
+if ("label" %in% names(table1)) {
+  table1 <- table1 %>% rename(Variable = label)
+}
+
+if ("all" %in% names(table1)) {
+  table1 <- table1 %>% rename(Overall = all)
+}
+
+n_control <- sum(df_veteran$trt == "Standard", na.rm = TRUE)
+n_test <- sum(df_veteran$trt == "Test", na.rm = TRUE)
+n_total <- nrow(df_veteran)
+
+names(table1)[names(table1) == "Standard"] <- paste0("Control (N=", n_control, ")")
+names(table1)[names(table1) == "Test"] <- paste0("Test therapy (N=", n_test, ")")
+names(table1)[names(table1) == "Overall"] <- paste0("Overall (N=", n_total, ")")
+
+if ("Variable" %in% names(table1)) {
+  table1 <- table1 %>%
+    mutate(Variable = paste0(Variable, "   "))
+}
+baseline <- kbl(
+  table1,
+  format = "html",
+  align = "l",
+  caption = ""
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 18,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(table1), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1, color = "black", width = "8em") %>%
+  column_spec(2, color = "black", width = "8em") %>%
+  column_spec(3, color = "black", width = "8em") %>%
+  column_spec(4, color = "black", width = "8em") %>%
+  column_spec(5, color = "black", width = "8em") %>%
+  column_spec(6, color = "black", width = "8em") %>%
+  column_spec(7, color = "black", width = "8em") %>%
+  column_spec(8, color = "black", width = "8em")
+
+baseline
+
+save_kable(baseline, "baseline_table.png", zoom = 4)
+```
+

@@ -454,3 +454,244 @@ save_kable(modeltable, "modeltable.png", zoom = 4)
 
 ```
 
+
+
+
+
+## STEP 4: Model Selection and Survival Curve Comparison
+
+
+```{r}
+best_model_name <- model_table$Model[which.min(model_table$AIC)]
+
+best_fit <- switch(
+  best_model_name,
+  "Exponential" = exp_model,
+  "Weibull" = wei_model,
+  "Log-normal" = ln_model,
+  "Log-logistic" = ll_model,
+  "Gompertz" = gom_model,
+  "Gamma" = gamma_model,
+  "Generalized Gamma" = gengamma_model
+)
+
+best_model_summary <- tibble(
+  `Best Model` = best_model_name,
+  LogLik = round(model_table$LogLik[which.min(model_table$AIC)], 4),
+  AIC = round(min(model_table$AIC), 4)
+)
+
+best_model_table<- kbl(
+  best_model_summary,
+  format = "html",
+  align = "c",
+  caption = ""
+) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed")) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  add_header_above(
+    background = "#2E86C1",
+    color = "white",
+    bold = TRUE
+  )%>%
+  row_spec(1:nrow(best_model_summary), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1, color = "black", width = "12em") %>%
+  column_spec(2, color = "black", width = "8em") %>%
+  column_spec(3, color = "black", width = "8em")
+
+
+save_kable(best_model_table, "best_model_table.png", zoom = 4)
+```
+
+
+
+ 
+## Survival curves for each models  and kaplan curve  
+
+
+
+
+
+```{r}
+
+
+
+
+
+t_grid <- seq(0, max(df_veteran$time), length.out = 200)
+
+#************* Kaplan-Meier fit
+
+km_fit <- survfit(Surv(time, status) ~ 1, data = df_veteran)
+
+km_data <- data.frame(
+  time = km_fit$time,
+  surv = km_fit$surv,
+  Model = "Kaplan-Meier"
+)
+
+
+#************ Function to extract survival curve from each model
+get_surv_df <- function(model, model_name) {
+  s <- summary(model, type = "survival", t = t_grid)
+  data.frame(
+    time = s[[1]]$time,
+    surv = s[[1]]$est,
+    Model = model_name,
+    Comparison = model_name
+  )
+}
+
+
+model_curves <- bind_rows(
+  get_surv_df(exp_model, "Exponential"),
+  get_surv_df(wei_model, "Weibull"),
+  get_surv_df(ln_model, "Log-normal"),
+  get_surv_df(ll_model, "Log-logistic"),
+  get_surv_df(gom_model, "Gompertz"),
+  get_surv_df(gamma_model, "Gamma"),
+  get_surv_df(gengamma_model, "Generalized Gamma")
+)
+
+km_panels <- bind_rows(
+  lapply(unique(model_curves$Comparison), function(m) {
+    km_data %>% mutate(Comparison = m)
+  })
+)
+
+plot_data <- bind_rows(km_panels, model_curves)
+
+surv_plot <- ggplot(plot_data, aes(x = time, y = surv, color = Model, linetype = Model)) +
+    geom_step(
+    data = subset(plot_data, Model == "Kaplan-Meier"),
+    linewidth = 1.2
+  ) +
+  geom_line(
+    data = subset(plot_data, Model != "Kaplan-Meier"),
+    linewidth = 1.2
+  ) + 
+  facet_wrap(~ Comparison, ncol = 2, axes = "all_x", axis.labels = "all_x") +
+  scale_color_manual(values = c(
+    "Kaplan-Meier" = "black",
+    "Exponential" = "#E41A1C",
+    "Weibull" = "#377EB8",
+    "Log-normal" = "#4DAF4A",
+    "Log-logistic" = "#984EA3",
+    "Gompertz" = "#FF7F00",
+    "Gamma" = "#A65628",
+    "Generalized Gamma" = "#F781BF"
+  )) +
+  labs(
+    title = "Kaplan-Meier Compared with Each Parametric Model",
+    x = "Time (days)",
+    y = "Survival probability",
+    color = "Curve",
+    linetype = "Curve"
+  ) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    panel.border = element_blank(),
+    strip.text = element_text(face = "bold", size = 8),
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.4, vjust = 0.1),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size =8),
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 8)
+  )
+
+surv_plot
+
+
+ggsave(
+  filename = "survival_model_comparison.png")
+```
+
+
+
+
+
+## STEP 5: Life Functions for the Best Model
+
+
+
+```{r}
+t <- seq(0, max(df_veteran$time), length.out = 200)
+
+S <- summary(best_fit, t = t, type = "survival")[[1]]$est
+h <- summary(best_fit, t = t, type = "hazard")[[1]]$est
+H <- summary(best_fit, t = t, type = "cumhaz")[[1]]$est
+f <- h * S
+F <- 1 - S
+```
+
+
+
+### Mean and variance 
+
+
+```{r}
+library(tibble)
+library(knitr)
+library(kableExtra)
+
+mu <- gengamma_model$res["mu", "est"]
+sigma <- gengamma_model$res["sigma", "est"]
+Q <- gengamma_model$res["Q", "est"]
+
+k <- 1 / Q^2
+p <- Q / sigma
+a <- exp(mu - log(k) / p)
+d <- p * k
+
+mean_T <- a * gamma((d + 1)/p) / gamma(d/p)
+
+var_T <- a^2 * (
+  gamma((d + 2)/p) / gamma(d/p) -
+    (gamma((d + 1)/p) / gamma(d/p))^2
+)
+
+gengamma_summary <- tibble(
+  Model = "Generalized Gamma",
+  a = round(a, 4),
+  d = round(d, 4),
+  p = round(p, 4),
+  Mean= round(mean_T, 4),
+  Variance = round(var_T, 4)
+)
+
+gengamma_summary<-gengamma_summary %>%
+  kbl(
+    format = "html",
+    align = "c",
+    caption = ""
+  ) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(gengamma_summary), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1, color = "black", width = "12em") %>%
+  column_spec(2, color = "black", width = "8em") %>%
+  column_spec(3, color = "black", width = "8em") %>%
+  column_spec(4, color = "black", width = "8em") %>%
+  column_spec(5, color = "black", width = "12em") %>%
+  column_spec(6, color = "black", width = "12em")
+
+
+save_kable(gengamma_summary, "genvariance.png", zoom=4)
+```
+
+
+
+
+
+
+
+
+
+
+
+

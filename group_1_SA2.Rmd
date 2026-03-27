@@ -499,5 +499,284 @@ ggarrange(
 
 
 
+# Step 2. Nelson-Aalen Analysis
 
+```{r}
+na_trt <- survfit(surv_obj ~ trt, data = df_veteran)
+na_trt_sum <- summary(na_trt)
+```
+
+
+### Nelson-Aalen cumulative hazard and estimate of the hazard function of standard group
+
+
+
+
+
+
+
+```{r}
+na_table <- data.frame(
+  Group = gsub("trt=", "", na_trt_sum$strata),
+  time = na_trt_sum$time,
+  n.risk = na_trt_sum$n.risk,
+  n.event = na_trt_sum$n.event,
+  cumhaz = na_trt_sum$cumhaz,
+  lower = na_trt_sum$std.chaz,
+  upper = na_trt_sum$std.chaz
+)
+
+if (!is.null(na_trt_sum$lower) & !is.null(na_trt_sum$upper)) {
+  na_table$lower <- na_trt_sum$lower
+  na_table$upper <- na_trt_sum$upper
+} else {
+  na_table$lower <- NA
+  na_table$upper <- NA
+}
+
+na_table <- na_table %>%
+  mutate(
+    hazard = n.event / n.risk,
+    cumhaz = round(cumhaz, 3),
+    hazard = round(hazard, 3),
+    lower  = round(lower, 3),
+    upper  = round(upper, 3),
+    CI = ifelse(is.na(lower), "-", paste0(lower, " - ", upper))
+  ) %>%
+  select(Group, time, n.risk, n.event, cumhaz, hazard, CI)
+
+na_standard <- na_table %>%
+  filter(Group == "Standard") %>%
+  select(-Group) %>%
+  slice(1:15)
+
+na_standard_tbl <- kbl(
+  na_standard,
+  format = "html",
+  align = "lcccccc",
+  caption = ""
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 18,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(na_standard), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1:6, color = "black", width = "8em")
+
+na_standard_tbl
+save_kable(na_standard_tbl, "na_standard_table.png", zoom = 4)
+```
+### Nelson-Aalen cumulative hazard and estimate of the hazard function of test therapy group
+
+
+
+### Test group
+
+```{r}
+na_test <- na_table %>%
+  filter(Group == "Test") %>%
+  select(-Group) %>%
+  slice(1:15)
+
+na_test_tbl <- kbl(
+  na_test,
+  format = "html",
+  align = "lccccc",
+  caption = ""
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 18,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(na_test), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1:5, color = "black", width = "8em")
+
+na_test_tbl
+save_kable(na_test_tbl, "na_test_table.png", zoom = 4)
+```
+### Plots
+
+
+
+```{r}
+
+
+df_veteran$trt <- factor(df_veteran$trt, levels = c("Standard", "Test"))
+
+df_veteran <- df_veteran %>%
+  mutate(event = ifelse(status == 2, 1, status))
+
+#******** Nelson-Aalen cumulative hazard
+
+na_fit <- survfit(
+  Surv(time, event) ~ trt,
+  data = df_veteran,
+  type = "fleming-harrington"
+)
+
+na_sum <- summary(na_fit)
+
+na_table <- data.frame(
+  Group   = gsub("trt=", "", na_sum$strata),
+  time    = na_sum$time,
+  n.risk  = na_sum$n.risk,
+  n.event = na_sum$n.event,
+  cumhaz  = na_sum$cumhaz
+)
+
+#*********** Generalized gamma model
+
+gg_model <- flexsurvreg(
+  Surv(time, event) ~ trt,
+  data = df_veteran,
+  dist = "gengamma"
+)
+
+tt <- seq(1, max(df_veteran$time, na.rm = TRUE), length.out = 400)
+
+#******** Predictions for Standard
+gg_std_surv <- summary(
+  gg_model,
+  newdata = data.frame(trt = factor("Standard", levels = levels(df_veteran$trt))),
+  t = tt,
+  type = "survival",
+  ci = FALSE
+)[[1]]
+
+gg_std_haz <- summary(
+  gg_model,
+  newdata = data.frame(trt = factor("Standard", levels = levels(df_veteran$trt))),
+  t = tt,
+  type = "hazard",
+  ci = FALSE
+)[[1]]
+
+#************** Predictions for Test
+gg_test_surv <- summary(
+  gg_model,
+  newdata = data.frame(trt = factor("Test", levels = levels(df_veteran$trt))),
+  t = tt,
+  type = "survival",
+  ci = FALSE
+)[[1]]
+
+gg_test_haz <- summary(
+  gg_model,
+  newdata = data.frame(trt = factor("Test", levels = levels(df_veteran$trt))),
+  t = tt,
+  type = "hazard",
+  ci = FALSE
+)[[1]]
+
+gen_df <- bind_rows(
+  data.frame(
+    Group = "Standard",
+    time = gg_std_surv$time,
+    cumhaz = -log(pmax(gg_std_surv$est, 1e-8)),
+    hazard = gg_std_haz$est
+  ),
+  data.frame(
+    Group = "Test",
+    time = gg_test_surv$time,
+    cumhaz = -log(pmax(gg_test_surv$est, 1e-8)),
+    hazard = gg_test_haz$est
+  )
+)
+
+
+#********** Smoothed empirical hazard
+
+std_dat  <- df_veteran %>% filter(trt == "Standard")
+test_dat <- df_veteran %>% filter(trt == "Test")
+
+mh_std <- muhaz(std_dat$time, std_dat$event)
+mh_test <- muhaz(test_dat$time, test_dat$event)
+
+haz_emp <- bind_rows(
+  data.frame(
+    Group = "Standard",
+    time = mh_std$est.grid,
+    hazard = mh_std$haz.est
+  ),
+  data.frame(
+    Group = "Test",
+    time = mh_test$est.grid,
+    hazard = mh_test$haz.est
+  )
+)
+
+
+#*********  Cumulative hazard plot
+
+p1 <- ggplot() +
+  geom_step(
+    data = na_table,
+    aes(x = time, y = cumhaz, color = Group, linetype = "Nelson-Aalen"),
+    linewidth = 1
+  ) +
+  geom_line(
+    data = gen_df,
+    aes(x = time, y = cumhaz, color = Group, linetype = "GenGamma"),
+    linewidth = 1
+  ) +
+  scale_color_manual(values = c("Standard" = "black", "Test" = "#D62728")) +
+  scale_linetype_manual(values = c("Nelson-Aalen" = "solid", "GenGamma" = "dashed")) +
+  labs(
+    title = "Cumulative hazard",
+    x = "Time (days)",
+    y = "Cumulative hazard",
+    color = "Treatment",
+    linetype = "Curve"
+  ) +
+  theme_pubr(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    legend.position = "bottom"
+  )
+
+
+#*********** Hazard plot
+
+p2 <- ggplot() +
+  geom_line(
+    data = haz_emp,
+    aes(x = time, y = hazard, color = Group, linetype = "Empirical"),
+    linewidth = 1
+  ) +
+  geom_line(
+    data = gen_df,
+    aes(x = time, y = hazard, color = Group, linetype = "GenGamma"),
+    linewidth = 1
+  ) +
+  scale_color_manual(values = c("Standard" = "black", "Test" = "#D62728")) +
+  scale_linetype_manual(values = c("Empirical" = "solid", "GenGamma" = "dashed")) +
+  labs(
+    title = "Hazard",
+    x = "Time (days)",
+    y = "Hazard",
+    color = "Treatment",
+    linetype = "Curve"
+  ) +
+  theme_pubr(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    legend.position = "bottom"
+  )
+
+
+combined_plot <- p1 + p2 +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "right",
+    legend.box = "vertical"
+  )
+
+combined_plot
+
+ggsave("clean_hazard_comparison.png", combined_plot, width = 12, height = 5.5, dpi = 300)
+```
 

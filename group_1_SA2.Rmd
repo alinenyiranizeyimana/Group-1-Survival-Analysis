@@ -1,0 +1,503 @@
+---
+title: "Group 1 – Survival Analysis Assignment 2"
+author: "Group 1"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 8, fig.height = 5)
+```
+
+
+
+```{r packages-data}
+library(survival)
+library(dplyr)
+library(tidyr)
+library(finalfit)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(survminer)
+library(flexsurv)
+library(gridExtra)
+library(tibble)
+library(ggpubr)
+library(muhaz)
+library(splines)
+library(rms)
+library(patchwork)
+library(purrr)
+library(forcats)
+```
+
+
+
+
+```{r}
+
+data(cancer, package = "survival")
+df_veteran <- veteran
+
+if (all(sort(unique(na.omit(df_veteran$status))) == c(1, 2))) {
+  df_veteran <- df_veteran %>% mutate(status = status - 1)
+}
+
+df_veteran <- df_veteran %>%
+  mutate(
+    trt = factor(trt, levels = c(1, 2), labels = c("Standard", "Test")),
+    celltype = as.character(celltype),
+    celltype = case_when(
+      celltype %in% c("1", "squamous") ~ "Squamous",
+      celltype %in% c("2", "smallcell") ~ "Small cell",
+      celltype %in% c("3", "adeno")     ~ "Adeno",
+      celltype %in% c("4", "large")     ~ "Large",
+      TRUE ~ celltype
+    ),
+    celltype = factor(celltype, levels = c("Squamous", "Small cell", "Adeno", "Large")),
+    prior = factor(ifelse(prior == 0, "No", "Yes"), levels = c("No", "Yes"))
+  )
+
+```
+
+
+
+### Survival object
+
+```{r}
+surv_obj <- Surv(time = df_veteran$time, event = df_veteran$status)
+```
+
+
+# Step 1: Kaplan-Meier Estimator
+
+
+
+```{r km-overall-fit}
+
+#********* Kaplan-Meier fit
+km_overall <- survfit(surv_obj ~ 1, data = df_veteran)
+
+
+#********* Stratified empirical KM estimate by treatment
+km_trt <- survfit(surv_obj ~ trt, data = df_veteran)
+km_trt_sum<-summary(km_trt)
+
+```
+
+
+
+## Kaplan-Meier Emprical Estimates
+
+```{r}
+
+km_table <- data.frame(
+  Group = gsub("trt=", "", km_trt_sum$strata),
+  time = km_trt_sum$time,
+  n.risk = km_trt_sum$n.risk,
+  n.event = km_trt_sum$n.event,
+  survival = km_trt_sum$surv,
+  lower = km_trt_sum$lower,
+  upper = km_trt_sum$upper
+) %>%
+  mutate(
+    survival = round(survival, 3),
+    lower    = round(lower, 3),
+    upper    = round(upper, 3),
+    CI = paste0(lower, " - ", upper)
+  ) %>%
+  select(Group, time, n.risk, n.event, survival,  CI)
+
+km_standard <- km_table %>%
+  filter(Group == "Standard") %>%
+  select(-Group) %>%
+  slice(1:15)
+
+standard_tbl <- kbl(
+  km_standard,
+  format = "html",
+  align = "lccccc",
+  caption = ""
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 18,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(km_standard), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1, color = "black", width = "8em") %>%
+  column_spec(2, color = "black", width = "8em") %>%
+  column_spec(3, color = "black", width = "8em") %>%
+  column_spec(4, color = "black", width = "8em") %>%
+  column_spec(5, color = "black", width = "8em") 
+
+standard_tbl
+
+save_kable(standard_tbl, "km_standard_table.png", zoom = 4)
+```
+
+
+
+
+
+
+
+
+$$\textbf{Test group}$$
+
+
+
+```{r}
+km_test <- km_table %>%
+  filter(Group == "Test") %>%
+  select(-Group) %>%
+  slice(1:15)
+
+test_tbl <- kbl(
+  km_test,
+  format = "html",
+  align = "lccccc",
+  caption = ""
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 18,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(km_test), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1, color = "black", width = "8em") %>%
+  column_spec(2, color = "black", width = "8em") %>%
+  column_spec(3, color = "black", width = "8em") %>%
+  column_spec(4, color = "black", width = "8em") %>%
+  column_spec(5, color = "black", width = "8em")
+
+test_tbl
+
+save_kable(test_tbl, "km_test_table.png", zoom = 4)
+```
+
+
+
+
+
+
+
+
+## 1.1 & 1.2 Percentile
+
+
+
+```{r}
+
+q_overall <- quantile(km_overall, probs = c(0.25, 0.50, 0.75))
+q_trt     <- quantile(km_trt, probs = c(0.25, 0.50, 0.75))
+
+#******** Overall table
+overall_tbl <- data.frame(
+  Group = "Overall",
+  check.names = FALSE,
+  `25%` = paste0(q_overall$quantile["25"], " (", q_overall$lower["25"], " - ", q_overall$upper["25"], ")"),
+  `50%` = paste0(q_overall$quantile["50"], " (", q_overall$lower["50"], " - ", q_overall$upper["50"], ")"),
+  `75%` = paste0(q_overall$quantile["75"], " (", q_overall$lower["75"], " - ", q_overall$upper["75"], ")")
+)
+
+#******* Treatment table
+trt_tbl <- data.frame(
+  Group = c("Standard", "Test"),
+  check.names = FALSE,
+  `25%` = paste0(q_trt$quantile[, "25"], " (", q_trt$lower[, "25"], " - ", q_trt$upper[, "25"], ")"),
+  `50%` = paste0(q_trt$quantile[, "50"], " (", q_trt$lower[, "50"], " - ", q_trt$upper[, "50"], ")"),
+  `75%` = paste0(q_trt$quantile[, "75"], " (", q_trt$lower[, "75"], " - ", q_trt$upper[, "75"], ")")
+)
+
+
+final_tbl <- bind_rows(overall_tbl, trt_tbl)
+
+
+final_kbl <- kbl(
+  final_tbl,
+  format = "html",
+  align = "lccc",
+  caption = ""
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 18,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1F4E79") %>%
+  row_spec(1:nrow(final_tbl), extra_css = "border-bottom: 1px solid #999;") %>%
+  column_spec(1, color = "black", width = "10em") %>%
+  column_spec(2:4, color = "black", width = "12em")
+
+
+final_kbl
+
+save_kable(final_kbl, "percentile.png", zoom = 4)
+```
+
+
+
+## 1.3 Kaplan-Meier curve by treatment group
+
+
+
+```{r}
+
+df_veteran$trt <- factor(df_veteran$trt, levels = c("Standard", "Test"))
+
+
+surv_obj <- Surv(df_veteran$time, df_veteran$status)
+
+#******** Kaplan-Meier fit
+km_trt <- survfit(surv_obj ~ trt, data = df_veteran)
+
+#******** KM percentiles
+q_trt <- quantile(km_trt, probs = c(0.25, 0.50, 0.75))
+
+std_25  <- q_trt$quantile["trt=Standard", "25"]
+std_50  <- q_trt$quantile["trt=Standard", "50"]
+std_75  <- q_trt$quantile["trt=Standard", "75"]
+
+test_25 <- q_trt$quantile["trt=Test", "25"]
+test_50 <- q_trt$quantile["trt=Test", "50"]
+test_75 <- q_trt$quantile["trt=Test", "75"]
+
+
+#********** Generalized Gamma model
+
+gg_model <- flexsurvreg(
+  Surv(time, status) ~ trt,
+  data = df_veteran,
+  dist = "gengamma"
+)
+
+tt <- seq(0, max(df_veteran$time, na.rm = TRUE), length.out = 400)
+
+pred_std <- summary(
+  gg_model,
+  newdata = data.frame(trt = factor("Standard", levels = levels(df_veteran$trt))),
+  t = tt,
+  type = "survival",
+  ci = FALSE
+)[[1]]
+
+pred_test <- summary(
+  gg_model,
+  newdata = data.frame(trt = factor("Test", levels = levels(df_veteran$trt))),
+  t = tt,
+  type = "survival",
+  ci = FALSE
+)[[1]]
+
+gen_std_df <- data.frame(
+  time = pred_std$time,
+  surv = pred_std$est,
+  curve = "GenGamma Standard"
+)
+
+gen_test_df <- data.frame(
+  time = pred_test$time,
+  surv = pred_test$est,
+  curve = "GenGamma Test"
+)
+
+gen_df <- rbind(gen_std_df, gen_test_df)
+
+
+#******** KM plot
+
+p <- ggsurvplot(
+  km_trt,
+  data = df_veteran,
+  conf.int = TRUE,
+  pval = TRUE,
+  risk.table = TRUE,
+  surv.median.line = "hv",
+  xlab = "Time (days)",
+  ylab = "Survival probability",
+  legend.title = "Curve",
+  legend.labs = c("KM Standard", "KM Test"),
+  title = "Kaplan-Meier and Generalized Gamma Curves by Treatment",
+  palette = c("#1F77B4", "darkgreen"),
+  risk.table.col = "strata",
+  ggtheme = theme_bw()
+)
+
+
+p$plot <- p$plot +
+  geom_hline(yintercept = 0.75, linetype = "dashed", color = "darkgreen") +
+  geom_hline(yintercept = 0.50, linetype = "dashed", color = "purple") +
+  geom_hline(yintercept = 0.25, linetype = "dashed", color = "orange") +
+
+  geom_segment(aes(x = std_25, xend = std_25, y = 0, yend = 0.75),
+               linetype = "dotted", color = "#1F77B4") +
+  geom_segment(aes(x = std_50, xend = std_50, y = 0, yend = 0.50),
+               linetype = "dotted", color = "#1F77B4") +
+  geom_segment(aes(x = std_75, xend = std_75, y = 0, yend = 0.25),
+               linetype = "dotted", color = "#1F77B4") +
+
+  geom_segment(aes(x = test_25, xend = test_25, y = 0, yend = 0.75),
+               linetype = "dotted", color = "darkgreen") +
+  geom_segment(aes(x = test_50, xend = test_50, y = 0, yend = 0.50),
+               linetype = "dotted", color = "darkgreen") +
+  geom_segment(aes(x = test_75, xend = test_75, y = 0, yend = 0.25),
+               linetype = "dotted", color = "darkgreen") +
+
+  geom_line(
+    data = gen_df,
+    aes(x = time, y = surv, color = curve),
+    linewidth = 1.1,
+    inherit.aes = FALSE
+  ) +
+
+  scale_color_manual(
+    name = "Curve",
+    values = c(
+      "trt=Standard" = "#1F77B4",
+      "trt=Test" = "darkgreen",
+      "GenGamma Standard" = "black",
+      "GenGamma Test" = "brown"
+    ),
+    breaks = c("trt=Standard", "trt=Test", "GenGamma Standard", "GenGamma Test"),
+    labels = c("KM Standard", "KM Test", "GenGamma Standard", "GenGamma Test")
+  ) +
+
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    axis.title = element_text(size = 14),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11)
+  )
+
+p
+```
+
+
+
+
+## Survival curves grouped by the cell type
+
+
+```{r}
+
+df_veteran$celltype <- factor(df_veteran$celltype)
+df_veteran$trt <- factor(df_veteran$trt, levels = c("Standard", "Test"))
+
+
+plot_list <- lapply(levels(df_veteran$celltype), function(ct) {
+  
+  df_sub <- subset(df_veteran, celltype == ct)
+  
+  #***********  KM fit
+  fit_sub <- survfit(Surv(time, status) ~ trt, data = df_sub)
+  
+  #********* Generalized gamma model within this cell type
+  gg_model <- flexsurvreg(
+    Surv(time, status) ~ trt,
+    data = df_sub,
+    dist = "gengamma"
+  )
+  
+  tt <- seq(0, max(df_sub$time, na.rm = TRUE), length.out = 300)
+  
+  pred_std <- summary(
+    gg_model,
+    newdata = data.frame(trt = factor("Standard", levels = levels(df_veteran$trt))),
+    t = tt,
+    type = "survival",
+    ci = FALSE
+  )[[1]]
+  
+  pred_test <- summary(
+    gg_model,
+    newdata = data.frame(trt = factor("Test", levels = levels(df_veteran$trt))),
+    t = tt,
+    type = "survival",
+    ci = FALSE
+  )[[1]]
+  
+  gen_std_df <- data.frame(
+    time = pred_std$time,
+    surv = pred_std$est,
+    curve = "GenGamma Standard"
+  )
+  
+  gen_test_df <- data.frame(
+    time = pred_test$time,
+    surv = pred_test$est,
+    curve = "GenGamma Test"
+  )
+  
+  gen_df <- rbind(gen_std_df, gen_test_df)
+  
+
+  p <- ggsurvplot(
+    fit_sub,
+    data = df_sub,
+    conf.int = TRUE,
+    pval = TRUE,
+    risk.table = FALSE,
+    surv.median.line = "hv",
+    xlab = "Time (days)",
+    ylab = "Survival probability",
+    title = ct,
+    legend.title = "Curve",
+    legend.labs = c("KM Standard", "KM Test"),
+    palette = c("#1F77B4", "black"),
+    ggtheme = theme_pubr()
+  )
+  
+  p$plot <- p$plot +
+    geom_line(
+      data = gen_df,
+      aes(x = time, y = surv, color = curve),
+      linewidth = 1.1,
+      inherit.aes = FALSE
+    ) +
+    scale_color_manual(
+      name = "Curve",
+      values = c(
+        "KM Standard" = "#1F77B4",
+        "KM Test" = "black",
+        "GenGamma Standard" = "brown",
+        "GenGamma Test" = "darkblue"
+      ),
+      breaks = c("KM Standard", "KM Test", "GenGamma Standard", "GenGamma Test")
+    ) +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9),
+      axis.text = element_text(size = 8),
+      legend.title = element_text(size = 9),
+      legend.text = element_text(size = 8),
+      legend.position = "bottom"
+    )
+  
+  p
+})
+
+
+plot_only <- lapply(plot_list, function(x) x$plot)
+
+ggarrange(
+  plotlist = plot_only,
+  ncol = 2,
+  nrow = 2,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+```
+
+
+
+
+
